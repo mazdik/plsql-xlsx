@@ -13,7 +13,9 @@ PKG_XLSX_HELPER
 declare 
 bBLOB blob;
 begin
+  /* create header */	
   PKG_XLSX_HELPER.CREATE_REPORT_TEMPLATE(2, 1);
+  /* ... */
   :bBLOB := AS_XLSX.FINISH;
 end;
 ```

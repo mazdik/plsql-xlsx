@@ -364,8 +364,6 @@ begin
 end;
 */
 end;
-
- 
 /
 create or replace package body AS_XLSX is
   --
@@ -733,7 +731,9 @@ create or replace package body AS_XLSX is
     end if;
     t_width := trunc((t_nr_chr * 7 + 5) / 7 * 256) / 256; -- assume default 11 point Calibri
     if workbook.sheets(p_sheet).widths.exists(p_col) then
-      workbook.sheets(p_sheet).widths(p_col) := greatest(workbook.sheets(p_sheet).widths(p_col), t_width);
+      if(workbook.sheets(p_sheet).widths(p_col) is null or workbook.sheets(p_sheet).widths(p_col) <=0) then
+        workbook.sheets(p_sheet).widths(p_col) := greatest(workbook.sheets(p_sheet).widths(p_col), t_width);
+      end if;
     else
       workbook.sheets(p_sheet).widths(p_col) := greatest(t_width, 8.43);
     end if;
@@ -899,7 +899,7 @@ create or replace package body AS_XLSX is
        t_XF.alignment.horizontal is null and not nvl(t_XF.alignment.wrapText, false)) then
       return '';
     end if;
-    if t_XF.numFmtId > 0 then
+    if (t_XF.numFmtId > 0 and workbook.numFmtIndexes.exists(t_XF.numFmtId)) then
       set_col_width(p_sheet, p_col, workbook.numFmts(workbook.numFmtIndexes(t_XF.numFmtId)).formatCode);
     end if;
     t_cnt := workbook.cellXfs.count();
@@ -948,6 +948,9 @@ create or replace package body AS_XLSX is
   function add_string(p_string varchar2) return pls_integer is
     t_cnt pls_integer;
   begin
+    if (p_string is null) then 
+      return null; 
+    end if;
     if workbook.strings.exists(p_string) then
       t_cnt := workbook.strings(p_string);
     else
