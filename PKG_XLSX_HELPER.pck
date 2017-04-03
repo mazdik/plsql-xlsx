@@ -100,6 +100,11 @@ create or replace package body PKG_XLSX_HELPER is
     HEIGHT number);
   type tbROWS is table of tROW;
   tabROWS tbROWS := tbROWS();
+  /* Заливка */
+  type tFILL is record(
+    PATTERN_TYPE varchar2(30),
+    FG_RGB       varchar2(8));
+  type tbFILLS is table of tFILL index by pls_integer;
 
   /* Загрузка из clob */
   function CLOB2NODE(cCLOB in clob) return dbms_xmldom.domnode as
@@ -138,6 +143,16 @@ create or replace package body PKG_XLSX_HELPER is
                      translate(substr(sVALUE, 1, instr(sVALUE, 'E') - 1), '.012345678,-+', 'D999999999') || 'EEEE' end,
                      'NLS_NUMERIC_CHARACTERS=.,');
   end CONVERT_NUMBER;
+
+  /* Конвертация строки в дату */
+  function CONVERT_DATE(sVALUE in varchar2) return date as
+  begin
+    if (bDATE_1904) then
+      return to_date('01-01-1904', 'DD-MM-YYYY') + to_number(sVALUE);
+    else
+      return to_date('01-03-1900', 'DD-MM-YYYY') +(to_number(sVALUE) - 61);
+    end if;
+  end CONVERT_DATE;
 
   /* Конверитровать boolean в varchar2 */
   function BOOLEAN_TO_CHAR(bVALUE in boolean) return varchar2 is
@@ -408,6 +423,43 @@ create or replace package body PKG_XLSX_HELPER is
     return tabBORDERS;
   end GET_BORDERS;
 
+  /* Заливка  */
+  function GET_FILLS(cSTYLES_XML in clob) return tbFILLS as
+    tabFILLS       tbFILLS;
+    tDOM_NODE      dbms_xmldom.domnode;
+    tDOM_NODE_LIST dbms_xmldom.domnodelist;
+    tDOM_NODE2     dbms_xmldom.domnode;
+    sTEMP          varchar2(4000);
+    iCOUNT         pls_integer;
+  begin
+    tDOM_NODE      := CLOB2NODE(cSTYLES_XML);
+    tDOM_NODE_LIST := dbms_xslprocessor.selectnodes(tDOM_NODE, '/styleSheet/fills/fill');
+  
+    for cur in 0 .. dbms_xmldom.getLength(tDOM_NODE_LIST) - 1 loop
+      iCOUNT     := tabFILLS.count;
+      tDOM_NODE2 := dbms_xslprocessor.selectSingleNode(dbms_xmldom.item(tDOM_NODE_LIST, cur), 'patternFill');
+      if (not dbms_xmldom.isnull(tDOM_NODE2)) then
+        sTEMP := dbms_xslprocessor.valueof(tDOM_NODE2, '@patternType');
+        tabFILLS(iCOUNT).PATTERN_TYPE := sTEMP;
+      end if;
+    
+      tDOM_NODE2 := dbms_xslprocessor.selectSingleNode(dbms_xmldom.item(tDOM_NODE_LIST, cur), 'patternFill/fgColor');
+      if (not dbms_xmldom.isnull(tDOM_NODE2)) then
+        sTEMP := dbms_xslprocessor.valueof(tDOM_NODE2, '@rgb');
+        tabFILLS(iCOUNT).FG_RGB := sTEMP;
+      end if;
+    
+    end loop;
+  
+    if (bDEBUG) then
+      for i in 0 .. tabFILLS.count - 1 loop
+        dbms_output.put_line('PATTERN_TYPE: ' || tabFILLS(i).PATTERN_TYPE || ' FG_RGB: ' || tabFILLS(i).FG_RGB);
+      end loop;
+    end if;
+  
+    return tabFILLS;
+  end GET_FILLS;
+
   /* Шрифты  */
   function GET_FONTS(cSTYLES_XML in clob) return tbFONTS as
     tabFONTS       tbFONTS;
@@ -527,11 +579,7 @@ create or replace package body PKG_XLSX_HELPER is
           nVALUE := CONVERT_NUMBER(sCELL_VALUE);
           if sSTYLE_INDEX is not null and CELL_IS_DATE_FORMAT(to_number(sSTYLE_INDEX)) then
             tabCELLS(tabCELLS.last).CELL_TYPE := 'D';
-            if bDATE_1904 then
-              tabCELLS(tabCELLS.last).DATE_VAL := to_date('01-01-1904', 'DD-MM-YYYY') + to_number(nVALUE);
-            else
-              tabCELLS(tabCELLS.last).DATE_VAL := to_date('01-03-1900', 'DD-MM-YYYY') + (to_number(nVALUE) - 61);
-            end if;
+            tabCELLS(tabCELLS.last).DATE_VAL := CONVERT_DATE(nVALUE);
           else
             tabCELLS(tabCELLS.last).CELL_TYPE := 'N';
             nVALUE := round(nVALUE, 14 - substr(to_char(nVALUE, 'TME'), -3));
@@ -653,6 +701,7 @@ create or replace package body PKG_XLSX_HELPER is
     tabBORDERS     tbBORDERS;
     tabFONTS       tbFONTS;
     tabNUM_FMTS    tbNUM_FMTS;
+    tabFILLS       tbFILLS;
     iSTYLE_INDEX   pls_integer;
     tALIGNMENT     AS_XLSX.TP_ALIGNMENT;
     iBORDER_INDEX  pls_integer;
@@ -661,6 +710,8 @@ create or replace package body PKG_XLSX_HELPER is
     iFONT_ID       pls_integer;
     iNUM_FMT_INDEX pls_integer;
     iNUM_FMT_ID    pls_integer;
+    iFILL_INDEX    pls_integer;
+    iFILL_ID       pls_integer;
   begin
     tabCOLS        := GET_COLS(cSHEET_XML);
     tabMERGE_CELLS := GET_MERGE_CELLS(cSHEET_XML);
@@ -668,6 +719,7 @@ create or replace package body PKG_XLSX_HELPER is
     tabBORDERS     := GET_BORDERS(cSTYLES_XML);
     tabFONTS       := GET_FONTS(cSTYLES_XML);
     tabNUM_FMTS    := GET_NUM_FMTS(cSTYLES_XML);
+    tabFILLS       := GET_FILLS(cSTYLES_XML);
     tabCELLS       := GET_SHEET_DATA(cSHEET_XML, cSHARED_STRINGS_XML);
   
     AS_XLSX.CLEAR_WORKBOOK;
@@ -692,6 +744,7 @@ create or replace package body PKG_XLSX_HELPER is
                                              P_LEFT   => tabBORDERS(iBORDER_INDEX).LEFT,
                                              P_RIGHT  => tabBORDERS(iBORDER_INDEX).RIGHT);
           end if;
+        
           iFONT_INDEX := tabCELL_XFS(iSTYLE_INDEX).FONT_ID;
           if (tabFONTS.exists(iFONT_INDEX)) then
             iFONT_ID := AS_XLSX.GET_FONT(P_NAME      => tabFONTS(iFONT_INDEX).NAME,
@@ -702,13 +755,21 @@ create or replace package body PKG_XLSX_HELPER is
                                          P_BOLD      => tabFONTS(iFONT_INDEX).BOLD,
                                          P_RGB       => tabFONTS(iFONT_INDEX).COLOR);
           end if;
+        
           iNUM_FMT_INDEX := tabCELL_XFS(iSTYLE_INDEX).NUM_FMT_ID;
-          if (tabNUM_FMTS.exists(iNUM_FMT_INDEX)) then
-            iNUM_FMT_ID := tabNUM_FMTS(iNUM_FMT_INDEX).NUM_FMT_ID;
-            if (iNUM_FMT_ID >= 164) then
+          if (iNUM_FMT_INDEX < 164) then
+            iNUM_FMT_ID := iNUM_FMT_INDEX;
+          else
+            if (tabNUM_FMTS.exists(iNUM_FMT_INDEX)) then
               iNUM_FMT_ID := AS_XLSX.GET_NUMFMT(tabNUM_FMTS(iNUM_FMT_INDEX).FORMAT_CODE);
             end if;
           end if;
+        
+          iFILL_INDEX := tabCELL_XFS(iSTYLE_INDEX).FILL_ID;
+          if (tabFILLS.exists(iFILL_INDEX)) then
+            iFILL_ID := AS_XLSX.GET_FILL(tabFILLS(iFILL_INDEX).PATTERN_TYPE, tabFILLS(iFILL_INDEX).FG_RGB);
+          end if;
+        
         end if;
       end if;
     
@@ -719,7 +780,8 @@ create or replace package body PKG_XLSX_HELPER is
                      P_ALIGNMENT => tALIGNMENT,
                      P_BORDERID  => iBORDER_ID,
                      P_FONTID    => iFONT_ID,
-                     P_NUMFMTID  => iNUM_FMT_ID);
+                     P_NUMFMTID  => iNUM_FMT_ID,
+                     P_FILLID    => iFILL_ID);
       elsif (tabCELLS(i).CELL_TYPE = 'D' and tabCELLS(i).DATE_VAL is not null) then
         AS_XLSX.CELL(tabCELLS   (i).COL,
                      tabCELLS   (i).ROW,
@@ -727,7 +789,8 @@ create or replace package body PKG_XLSX_HELPER is
                      P_ALIGNMENT => tALIGNMENT,
                      P_BORDERID  => iBORDER_ID,
                      P_FONTID    => iFONT_ID,
-                     P_NUMFMTID  => iNUM_FMT_ID);
+                     P_NUMFMTID  => iNUM_FMT_ID,
+                     P_FILLID    => iFILL_ID);
       else
         if (tabCELLS(i).STRING_VAL is null) then
           iNUM_FMT_ID := null;
@@ -738,7 +801,8 @@ create or replace package body PKG_XLSX_HELPER is
                      P_ALIGNMENT => tALIGNMENT,
                      P_BORDERID  => iBORDER_ID,
                      P_FONTID    => iFONT_ID,
-                     P_NUMFMTID  => iNUM_FMT_ID);
+                     P_NUMFMTID  => iNUM_FMT_ID,
+                     P_FILLID    => iFILL_ID);
       end if;
       tALIGNMENT  := null;
       iBORDER_ID  := null;
@@ -794,23 +858,39 @@ create or replace package body PKG_XLSX_HELPER is
   
     bUNZIP_FILE := AS_ZIP.GET_FILE(bXLSX, 'xl/workbook.xml');
     xFILE       := XMLTYPE.CREATEXML(bUNZIP_FILE, nls_charset_id('AL32UTF8'), null);
-    DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
-    cWORKBOOK_XML := xFILE.GETCLOBVAL();
+    if DBMS_LOB.ISTEMPORARY(bUNZIP_FILE) = 1 then
+      DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
+    end if;
+    if (xFILE is not null) then
+      cWORKBOOK_XML := xFILE.GETCLOBVAL();
+    end if;
   
     bUNZIP_FILE := AS_ZIP.GET_FILE(bXLSX, 'xl/worksheets/sheet1.xml');
     xFILE       := XMLTYPE.CREATEXML(bUNZIP_FILE, nls_charset_id('AL32UTF8'), null);
-    DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
-    cSHEET_XML := xFILE.GETCLOBVAL();
+    if DBMS_LOB.ISTEMPORARY(bUNZIP_FILE) = 1 then
+      DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
+    end if;
+    if (xFILE is not null) then
+      cSHEET_XML := xFILE.GETCLOBVAL();
+    end if;
   
     bUNZIP_FILE := AS_ZIP.GET_FILE(bXLSX, 'xl/sharedStrings.xml');
     xFILE       := XMLTYPE.CREATEXML(bUNZIP_FILE, nls_charset_id('AL32UTF8'), null);
-    DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
-    cSHARED_STRINGS_XML := xFILE.GETCLOBVAL();
+    if DBMS_LOB.ISTEMPORARY(bUNZIP_FILE) = 1 then
+      DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
+    end if;
+    if (xFILE is not null) then
+      cSHARED_STRINGS_XML := xFILE.GETCLOBVAL();
+    end if;
   
     bUNZIP_FILE := AS_ZIP.GET_FILE(bXLSX, 'xl/styles.xml');
     xFILE       := XMLTYPE.CREATEXML(bUNZIP_FILE, nls_charset_id('AL32UTF8'), null);
-    DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
-    cSTYLES_XML := xFILE.GETCLOBVAL();
+    if DBMS_LOB.ISTEMPORARY(bUNZIP_FILE) = 1 then
+      DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
+    end if;
+    if (xFILE is not null) then
+      cSTYLES_XML := xFILE.GETCLOBVAL();
+    end if;
   
     bDATE_1904 := GET_DATE_1904(cWORKBOOK_XML);
   
