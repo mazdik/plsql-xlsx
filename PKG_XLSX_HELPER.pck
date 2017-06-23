@@ -60,6 +60,8 @@ create or replace package PKG_XLSX_HELPER is
     BOLD      boolean default false);
   type tbFONTS is table of tFONT index by pls_integer;
 
+  /* Загрузка из директории */
+  function FILE2BLOB(sDIR in varchar2, sFILE_NAME in varchar2) return blob;
   /* Колонки */
   function GET_COLS(cSHEET_XML in clob) return tbCOLS;
   /* Объединенные ячейки */
@@ -81,6 +83,8 @@ create or replace package PKG_XLSX_HELPER is
   procedure GEN_CODE_FOR_AS_XLSX(cSHEET_XML in clob, cSHARED_STRINGS_XML in clob, cSTYLES_XML in clob);
   /* Формирование шаблона отчета */
   procedure CREATE_REPORT_TEMPLATE(nREPORT_ID in number, iVERSION pls_integer default 1);
+  /* Данные из файла */
+  function GET_DATA(bXLSX in blob) return tbCELLS;
 
 end PKG_XLSX_HELPER;
 /
@@ -134,6 +138,28 @@ create or replace package body PKG_XLSX_HELPER is
     DBMS_XMLPARSER.freeParser(xPARSER);
     return xROOT;
   end CLOB2NODE;
+
+  /* Загрузка из директории */
+  function FILE2BLOB(sDIR in varchar2, sFILE_NAME in varchar2) return blob is
+    bFILE_LOB  bfile;
+    bFILE_BLOB blob;
+  begin
+    bFILE_LOB := BFILENAME(SDIR, SFILE_NAME);
+    DBMS_LOB.OPEN(bFILE_LOB, DBMS_LOB.FILE_READONLY);
+    DBMS_LOB.CREATETEMPORARY(bFILE_BLOB, TRUE, DBMS_LOB.CALL);
+    DBMS_LOB.LOADFROMFILE(bFILE_BLOB, bFILE_LOB, DBMS_LOB.LOBMAXSIZE);
+    DBMS_LOB.CLOSE(bFILE_LOB);
+    return bFILE_BLOB;
+  exception
+    when others then
+      if DBMS_LOB.ISOPEN(bFILE_LOB) = 1 then
+        DBMS_LOB.CLOSE(bFILE_LOB);
+      end if;
+      if DBMS_LOB.ISTEMPORARY(bFILE_BLOB) = 1 then
+        DBMS_LOB.FREETEMPORARY(bFILE_BLOB);
+      end if;
+      raise;
+  end FILE2BLOB;
 
   /* Конвертация строки в число */
   function CONVERT_NUMBER(sVALUE in varchar2) return number as
@@ -896,6 +922,46 @@ create or replace package body PKG_XLSX_HELPER is
   
     BUILD_AS_XLSX(cSHEET_XML, cSHARED_STRINGS_XML, cSTYLES_XML);
   end CREATE_REPORT_TEMPLATE;
+
+  /* Данные из файла */
+  function GET_DATA(bXLSX in blob) return tbCELLS is
+    bUNZIP_FILE         blob;
+    xFILE               XMLTYPE;
+    cWORKBOOK_XML       clob;
+    cSHEET_XML          clob;
+    cSHARED_STRINGS_XML clob;
+  begin
+    bUNZIP_FILE := AS_ZIP.GET_FILE(bXLSX, 'xl/workbook.xml');
+    xFILE       := XMLTYPE.CREATEXML(bUNZIP_FILE, nls_charset_id('AL32UTF8'), null);
+    if DBMS_LOB.ISTEMPORARY(bUNZIP_FILE) = 1 then
+      DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
+    end if;
+    if (xFILE is not null) then
+      cWORKBOOK_XML := xFILE.GETCLOBVAL();
+    end if;
+  
+    bUNZIP_FILE := AS_ZIP.GET_FILE(bXLSX, 'xl/worksheets/sheet1.xml');
+    xFILE       := XMLTYPE.CREATEXML(bUNZIP_FILE, nls_charset_id('AL32UTF8'), null);
+    if DBMS_LOB.ISTEMPORARY(bUNZIP_FILE) = 1 then
+      DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
+    end if;
+    if (xFILE is not null) then
+      cSHEET_XML := xFILE.GETCLOBVAL();
+    end if;
+  
+    bUNZIP_FILE := AS_ZIP.GET_FILE(bXLSX, 'xl/sharedStrings.xml');
+    xFILE       := XMLTYPE.CREATEXML(bUNZIP_FILE, nls_charset_id('AL32UTF8'), null);
+    if DBMS_LOB.ISTEMPORARY(bUNZIP_FILE) = 1 then
+      DBMS_LOB.FREETEMPORARY(bUNZIP_FILE);
+    end if;
+    if (xFILE is not null) then
+      cSHARED_STRINGS_XML := xFILE.GETCLOBVAL();
+    end if;
+  
+    bDATE_1904 := GET_DATE_1904(cWORKBOOK_XML);
+  
+    return GET_SHEET_DATA(cSHEET_XML, cSHARED_STRINGS_XML);
+  end GET_DATA;
 
 begin
   /* Обязательно */
