@@ -34,6 +34,8 @@ create or replace package AS_XLSX is
   **     Added preserve all the white space <t xml:space="preserve">
   **   Date: 21-03-2017
   **     Added setRowHeight
+  **   Date: 20-07-2017
+  **     Fixed the definition of names (<definedName>) that did not work when the sheet name is set
   **
   ******************************************************************************
   ******************************************************************************
@@ -1162,12 +1164,20 @@ create or replace package body AS_XLSX is
                          p_name       varchar2,
                          p_sheet      pls_integer := null,
                          p_localsheet pls_integer := null) is
-    t_ind   pls_integer;
-    t_sheet pls_integer := nvl(p_sheet, workbook.sheets.count());
+    t_ind        pls_integer;
+    t_sheet      pls_integer := nvl(p_sheet, workbook.sheets.count());
+    t_sheet_name varchar(100);
   begin
+    if(workbook.sheets.exists(workbook.sheets.count) and workbook.sheets(workbook.sheets.count).name is not null) then
+      t_sheet_name := workbook.sheets(workbook.sheets.count).name;
+    else
+      t_sheet_name := 'Sheet' || t_sheet;
+    end if;
+    t_sheet_name := '''' || t_sheet_name || '''';
+    
     t_ind := workbook.defined_names.count() + 1;
     workbook.defined_names(t_ind).name := p_name;
-    workbook.defined_names(t_ind).ref := 'Sheet' || t_sheet || '!$' || alfan_col(p_tl_col) || '$' ||
+    workbook.defined_names(t_ind).ref := t_sheet_name || '!$' || alfan_col(p_tl_col) || '$' ||
                                          p_tl_row || ':$' || alfan_col(p_br_col) || '$' || p_br_row;
     workbook.defined_names(t_ind).sheet := p_localsheet;
   end;
