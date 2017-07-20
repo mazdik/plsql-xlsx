@@ -36,6 +36,8 @@ create or replace package AS_XLSX is
   **     Added setRowHeight
   **   Date: 20-07-2017
   **     Fixed the definition of names (<definedName>) that did not work when the sheet name is set
+  **   Date: 20-07-2017
+  **     Added hyperlink by location
   **
   ******************************************************************************
   ******************************************************************************
@@ -168,6 +170,10 @@ create or replace package AS_XLSX is
                       p_url   varchar2,
                       p_value varchar2 := null,
                       p_sheet pls_integer := null);
+  --
+  procedure hyperlink_loc(p_col      pls_integer,
+                          p_row      pls_integer,
+                          p_location varchar2);
   --
   procedure comment(p_col    pls_integer,
                     p_row    pls_integer,
@@ -394,8 +400,9 @@ create or replace package body AS_XLSX is
     row_end      pls_integer);
   type tp_autofilters is table of tp_autofilter index by pls_integer;
   type tp_hyperlink is record(
-    cell varchar2(10),
-    url  varchar2(1000));
+    cell     varchar2(10),
+    url      varchar2(1000),
+    location varchar2(1000));
   type tp_hyperlinks is table of tp_hyperlink index by pls_integer;
   subtype tp_author is varchar2(32767 char);
   type tp_authors is table of pls_integer index by tp_author;
@@ -1038,6 +1045,22 @@ create or replace package body AS_XLSX is
     t_ind := workbook.sheets(t_sheet).hyperlinks.count() + 1;
     workbook.sheets(t_sheet).hyperlinks(t_ind).cell := alfan_col(p_col) || p_row;
     workbook.sheets(t_sheet).hyperlinks(t_ind).url := p_url;
+  end;
+  --
+  procedure hyperlink_loc(p_col      pls_integer,
+      	                  p_row      pls_integer,
+                          p_location varchar2) is
+    t_ind   pls_integer;
+    t_sheet pls_integer := workbook.sheets.count();
+  begin
+    workbook.sheets(t_sheet).rows(p_row)(p_col).style := 't="s" ' ||
+                                                         get_XfId(t_sheet, p_col, p_row, '',
+                                                                  get_font('Calibri',
+                                                                           p_theme     => 10,
+                                                                           p_underline => true));
+    t_ind := workbook.sheets(t_sheet).hyperlinks.count() + 1;
+    workbook.sheets(t_sheet).hyperlinks(t_ind).cell := alfan_col(p_col) || p_row;
+    workbook.sheets(t_sheet).hyperlinks(t_ind).location := p_location;
   end;
   --
   procedure comment(p_col    pls_integer,
@@ -1960,8 +1983,11 @@ create or replace package body AS_XLSX is
       if workbook.sheets(s).hyperlinks.count() > 0 then
         t_xxx := t_xxx || '<hyperlinks>';
         for h in 1 .. workbook.sheets(s).hyperlinks.count() loop
-          t_xxx := t_xxx || '<hyperlink ref="' || workbook.sheets(s).hyperlinks(h).cell || '" r:id="rId' || h ||
-                   '"/>';
+          if(workbook.sheets(s).hyperlinks(h).location is not null) then
+            t_xxx := t_xxx || '<hyperlink ref="' || workbook.sheets(s).hyperlinks(h).cell || '" location="' || workbook.sheets(s).hyperlinks(h).location || '"/>';
+          else
+            t_xxx := t_xxx || '<hyperlink ref="' || workbook.sheets(s).hyperlinks(h).cell || '" r:id="rId' || h || '"/>';
+          end if;
         end loop;
         t_xxx := t_xxx || '</hyperlinks>';
       end if;
